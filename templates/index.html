@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Latency Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .status-card {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        .status-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+        }
+        .status-card h3 {
+            margin-top: 0;
+            color: #ffffff;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .status-card p {
+            margin: 5px 0;
+            color: #b3b3b3;
+        }
+        .latency {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+            transition: color 0.3s ease;
+        }
+        .spike {
+            color: #ff4444;
+            animation: pulse 1s infinite;
+        }
+        .normal {
+            color: #4CAF50;
+        }
+        .suggestion {
+            background: #3d3d3d;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none;
+            border-left: 4px solid #ffc107;
+        }
+        .switch-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 5px;
+            transition: background-color 0.3s ease;
+        }
+        .switch-btn:hover {
+            background-color: #45a049;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        button:disabled {
+            background-color: #666666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .no-websites {
+            text-align: center;
+            padding: 40px;
+            background: #2d2d2d;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            color: #b3b3b3;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px;
+            background: #3d3d3d;
+            border-left: 4px solid #ffc107;
+            border-radius: 4px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            display: none;
+            z-index: 1000;
+            max-width: 300px;
+            color: #ffffff;
+        }
+        .notification.show {
+            display: block;
+            animation: slideIn 0.5s ease-out;
+        }
+        .chart-container {
+            margin-top: 15px;
+            height: 150px;
+            position: relative;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Network Latency Monitor</h1>
+            <p>Monitor latency for websites you visit in Chrome</p>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn" onclick="startMonitoring()">Start Monitoring</button>
+            <button id="stopBtn" onclick="stopMonitoring()" style="display: none;">Stop Monitoring</button>
+        </div>
+
+        <div id="statusGrid" class="status-grid">
+            <div class="no-websites">
+                <h3>No websites visited yet</h3>
+                <p>Visit some websites in Chrome to start monitoring their latency</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+        let isMonitoring = false;
+        let statusInterval;
+        let lastSpikeState = {};
+        let charts = {};
+        let chartData = {};
+        let updateLoopId = null;
+
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 5000);
+        }
+
+        function switchServer(domain, newServer) {
+            fetch('/api/switch_server', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    domain: domain,
+                    new_server: newServer
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`Switched to better server for ${domain}`);
+                    // Reset spike state for this domain
+                    lastSpikeState[domain] = {...lastSpikeState[domain], is_spike: false};
+                    // Force immediate status update
+                    updateStatus();
+                } else {
+                    showNotification(`Failed to switch server: ${data.error}`);
+                }
+            })
+            .catch(error => {
+                showNotification('Failed to switch server');
+            });
+        }
+
+        function createChart(canvasId) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Actual Latency',
+                        data: [],
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }, {
+                        label: 'Predicted Latency',
+                        data: [],
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 0
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: '#b3b3b3'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: '#b3b3b3',
+                                maxRotation: 0
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            labels: {
+                                color: '#b3b3b3'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(website, latency, predicted) {
+            if (!charts[website]) {
+                const canvasId = `chart-${website}`;
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) {
+                    console.error(`Canvas not found for ${website}`);
+                    return;
+                }
+                charts[website] = createChart(canvasId);
+                chartData[website] = {
+                    labels: [],
+                    actualData: [],
+                    predictedData: []
+                };
+            }
+
+            const chart = charts[website];
+            const data = chartData[website];
+            const maxDataPoints = 20;
+            const timestamp = new Date().toLocaleTimeString();
+
+            // Update data arrays
+            data.labels.push(timestamp);
+            data.actualData.push(latency);
+            data.predictedData.push(predicted);
+
+            // Keep only the last maxDataPoints
+            if (data.labels.length > maxDataPoints) {
+                data.labels.shift();
+                data.actualData.shift();
+                data.predictedData.shift();
+            }
+
+            // Update chart data
+            chart.data.labels = data.labels;
+            chart.data.datasets[0].data = data.actualData;
+            chart.data.datasets[1].data = data.predictedData;
+
+            // Update the chart with animation disabled
+            chart.update('none');
+        }
+
+        function updateStatus() {
+            if (!isMonitoring) return;
+            
+            console.log('Updating status...');
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Status data:', data);
+                    const statusGrid = document.getElementById('statusGrid');
+                    
+                    if (Object.keys(data).length === 0) {
+                        statusGrid.innerHTML = `
+                            <div class="no-websites">
+                                <h3>No websites visited yet</h3>
+                                <p>Visit some websites in Chrome to start monitoring their latency</p>
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    // Create new grid content
+                    let newContent = '';
+                    for (const [website, status] of Object.entries(data)) {
+                        // Check for new spikes
+                        if (status.is_spike && (!lastSpikeState[website] || !lastSpikeState[website].is_spike)) {
+                            showNotification(`Latency spike detected for ${website}! Suggested server: ${status.suggested_server}`);
+                        }
+                        lastSpikeState[website] = {...status};
+
+                        const latencyClass = status.is_spike ? 'spike' : 'normal';
+                        
+                        // Always show server suggestions if available
+                        const suggestionHtml = status.suggested_server ? `
+                            <div class="suggestion" style="display: block">
+                                <p>Best available server: ${status.suggested_server}</p>
+                                <p>Potential improvement: ${status.improvement ? status.improvement.toFixed(2) : 'Unknown'}ms</p>
+                                <button class="switch-btn" onclick="switchServer('${website}', '${status.suggested_server}')">
+                                    Switch to Better Server
+                                </button>
+                            </div>
+                        ` : '';
+
+                        newContent += `
+                            <div class="status-card">
+                                <h3>${website}</h3>
+                                <p>Last update: ${status.last_update || 'Never'}</p>
+                                <div class="latency ${latencyClass}">
+                                    ${status.latency ? `${status.latency.toFixed(2)}ms` : 'No data'}
+                                </div>
+                                <p>Predicted: ${status.predicted ? `${status.predicted.toFixed(2)}ms` : 'No data'}</p>
+                                <div class="chart-container">
+                                    <canvas id="chart-${website}"></canvas>
+                                </div>
+                                ${suggestionHtml}
+                            </div>
+                        `;
+                    }
+                    
+                    // Update grid content
+                    statusGrid.innerHTML = newContent;
+
+                    // Update charts after DOM is updated
+                    for (const [website, status] of Object.entries(data)) {
+                        if (status.latency && status.predicted) {
+                            updateChart(website, status.latency, status.predicted);
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating status:', error);
+                });
+        }
+
+        function startMonitoring() {
+            console.log('Starting monitoring...');
+            fetch('/api/start')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Start response:', data);
+                    if (data.message === "Monitoring started") {
+                        isMonitoring = true;
+                        document.getElementById('startBtn').style.display = 'none';
+                        document.getElementById('stopBtn').style.display = 'inline-block';
+                        
+                        // Clear existing intervals
+                        if (updateLoopId) {
+                            cancelAnimationFrame(updateLoopId);
+                        }
+                        
+                        // Initial update
+                        updateStatus();
+                        
+                        // Set up continuous updates
+                        function updateLoop() {
+                            if (isMonitoring) {
+                                updateStatus();
+                                updateLoopId = requestAnimationFrame(updateLoop);
+                            }
+                        }
+                        updateLoopId = requestAnimationFrame(updateLoop);
+                        
+                        showNotification('Monitoring started');
+                    } else if (data.message === "Monitoring already running") {
+                        resetMonitoring();
+                    } else {
+                        showNotification('Failed to start monitoring: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error starting monitoring:', error);
+                    showNotification('Failed to start monitoring');
+                });
+        }
+
+        function resetMonitoring() {
+            console.log('Resetting monitoring state...');
+            fetch('/api/reset')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Reset response:', data);
+                    if (data.message === "Monitoring state reset") {
+                        // After reset, try starting monitoring again
+                        startMonitoring();
+                    } else {
+                        showNotification('Failed to reset monitoring state');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error resetting monitoring:', error);
+                    showNotification('Failed to reset monitoring state');
+                });
+        }
+
+        function stopMonitoring() {
+            console.log('Stopping monitoring...');
+            fetch('/api/stop')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Stop response:', data);
+                    if (data.message === "Monitoring stopped") {
+                        isMonitoring = false;
+                        document.getElementById('startBtn').style.display = 'inline-block';
+                        document.getElementById('stopBtn').style.display = 'none';
+                        
+                        // Clear the update loop
+                        if (updateLoopId) {
+                            cancelAnimationFrame(updateLoopId);
+                            updateLoopId = null;
+                        }
+                        
+                        showNotification('Monitoring stopped');
+                    } else {
+                        showNotification('Failed to stop monitoring: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error stopping monitoring:', error);
+                    showNotification('Failed to stop monitoring');
+                });
+        }
+
+        // Initial status update
+        updateStatus();
+    </script>
+</body>
+</html> 

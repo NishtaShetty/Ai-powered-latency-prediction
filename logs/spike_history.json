@@ -1,0 +1,16 @@
+[
+  {
+    "timestamp": 1748455161.2034204,
+    "server": "google.com",
+    "latency": 211.0,
+    "predicted": 42.80917375691456,
+    "severity": 1.0
+  },
+  {
+    "timestamp": 1748455327.263274,
+    "server": "google.com",
+    "latency": 194.0,
+    "predicted": 47.70376678498817,
+    "severity": 1.0
+  }
+]
