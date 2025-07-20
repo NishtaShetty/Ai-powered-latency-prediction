@@ -47,10 +47,15 @@ function addWebsite(url) {
         const urlObj = new URL(url);
         const domain = urlObj.hostname;
         
+        // Skip chrome:// and extension URLs
+        if (urlObj.protocol === 'chrome:' || urlObj.protocol === 'chrome-extension:') {
+            return;
+        }
+        
         // Add to visited websites
         visitedWebsites.add(domain);
         
-        // Update popup
+        // Update popup with current website
         chrome.runtime.sendMessage({
             action: 'updateLastWebsite',
             website: domain
@@ -83,20 +88,60 @@ function addWebsite(url) {
 }
 
 function fetchAndUpdateStatus(domain) {
+    if (!domain || domain === 'No website detected') {
+        return;
+    }
+    
     fetch('http://localhost:5000/api/status')
         .then(response => response.json())
         .then(data => {
             if (data[domain]) {
+                // Update latency
                 if (data[domain].latency !== undefined && data[domain].latency !== null) {
-                    chrome.runtime.sendMessage({ action: 'updateLatency', latency: data[domain].latency });
+                    chrome.runtime.sendMessage({ 
+                        action: 'updateLatency', 
+                        latency: Math.round(data[domain].latency ) // Convert to ms
+                    });
                 }
+                
+                // Update prediction
                 if (data[domain].predicted !== undefined && data[domain].predicted !== null) {
-                    chrome.runtime.sendMessage({ action: 'updatePrediction', prediction: data[domain].predicted });
+                    chrome.runtime.sendMessage({ 
+                        action: 'updatePrediction', 
+                        prediction: Math.round(data[domain].predicted ) // Convert to ms
+                    });
                 }
+                
+                // Update confidence (assuming server provides this)
+                if (data[domain].confidence !== undefined && data[domain].confidence !== null) {
+                    chrome.runtime.sendMessage({ 
+                        action: 'updateConfidence', 
+                        confidence: data[domain].confidence 
+                    });
+                } else {
+                    // If no confidence provided, calculate a mock confidence based on prediction accuracy
+                    if (data[domain].latency && data[domain].predicted) {
+                        const accuracy = 1 - Math.abs(data[domain].latency - data[domain].predicted) / data[domain].latency;
+                        const confidence = Math.max(0.3, Math.min(0.95, accuracy)); // Clamp between 30% and 95%
+                        chrome.runtime.sendMessage({ 
+                            action: 'updateConfidence', 
+                            confidence: confidence 
+                        });
+                    }
+                }
+            } else {
+                // No data available for this domain
+                chrome.runtime.sendMessage({ action: 'updateLatency', latency: null });
+                chrome.runtime.sendMessage({ action: 'updatePrediction', prediction: null });
+                chrome.runtime.sendMessage({ action: 'updateConfidence', confidence: null });
             }
         })
         .catch(error => {
             console.error('Failed to fetch status from server:', error);
+            // Clear values on error
+            chrome.runtime.sendMessage({ action: 'updateLatency', latency: null });
+            chrome.runtime.sendMessage({ action: 'updatePrediction', prediction: null });
+            chrome.runtime.sendMessage({ action: 'updateConfidence', confidence: null });
         });
 }
 
@@ -112,4 +157,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
         addWebsite(tab.url);
     }
-}); 
+});
+
+// Listen for tab activation to update current website display
+chrome.tabs.onActivated.addListener((activeInfo) => {
+    chrome.tabs.get(activeInfo.tabId, (tab) => {
+        if (tab.url) {
+            addWebsite(tab.url);
+        }
+    });
+});

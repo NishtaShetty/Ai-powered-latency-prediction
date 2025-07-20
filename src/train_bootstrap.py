@@ -5,6 +5,7 @@ import pickle
 import os
 import numpy as np
 import random
+import sklearn.metrics
 
 def extract_features(timestamp, server_id):
     dt = datetime.datetime.fromtimestamp(float(timestamp))
@@ -16,6 +17,16 @@ def extract_features(timestamp, server_id):
         "is_business_hours": int(9 <= dt.hour <= 17),
         "server_id": hash(server_id) % 10
     }
+
+def classify_latency(latency):
+    low_threshold = 50
+    high_threshold = 150
+    if latency < low_threshold:
+        return 'low'
+    elif latency < high_threshold:
+        return 'medium'
+    else:
+        return 'high'
 
 def train_model(path="data/bootstrapped_latency.csv"):
     # Initialize model with standard preprocessing
@@ -58,14 +69,23 @@ def train_model(path="data/bootstrapped_latency.csv"):
     # Evaluate on test set
     mae = metrics.MAE()
     rmse = metrics.RMSE()
+    y_true, y_pred_class = [], []
     for row in test_data:
         x = extract_features(row["timestamp"], row["server_id"])
         y = float(row["latency"])
         pred = model.predict_one(x) or 0
         mae.update(y, pred)
         rmse.update(y, pred)
-    
+        
+        # Add to classification lists
+        y_true.append(classify_latency(y))
+        y_pred_class.append(classify_latency(pred))
+
     print(f"Test metrics - MAE: {mae.get():.2f}ms, RMSE: {rmse.get():.2f}ms")
+    
+    # Calculate confusion matrix
+    conf_matrix = sklearn.metrics.confusion_matrix(y_true, y_pred_class, labels=['low', 'medium', 'high'])
+    print(f"Confusion Matrix:\n{conf_matrix}")
     
     # Save model
     os.makedirs("model", exist_ok=True)
