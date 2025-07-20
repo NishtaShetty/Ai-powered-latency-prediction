@@ -118,10 +118,6 @@ Follow these steps to implement and use the Latency Predictor project:
      ```sh
      python server.py
      ```
-   - For simulation/demo only:
-     ```sh
-     python server1.py
-     ```
 
 5. **Access the Dashboard**
    - Open your browser and go to [http://localhost:5000](http://localhost:5000).
