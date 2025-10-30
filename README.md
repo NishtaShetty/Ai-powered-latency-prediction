@@ -32,28 +32,6 @@ latency_predictor/
 - Python 3.8+
 - pip
 
-### Installation
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/<your-username>/<repo-name>.git
-   cd <repo-name>
-   ```
-2. Install dependencies:
-   ```sh
-   pip install -r requirements.txt
-   ```
-
-### Running the Server
-- For real prediction (requires model and src modules):
-  ```sh
-  python server.py
-  ```
-- For simulation/demo only:
-  ```sh
-  python server1.py
-  ```
-
-The dashboard will be available at [http://localhost:5000](http://localhost:5000).
 
 ### API Endpoints
 - `/api/status` — Get current monitoring status
